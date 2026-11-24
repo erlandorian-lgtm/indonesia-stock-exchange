@@ -2,6 +2,8 @@ import pandas as pd
 from datetime import datetime, timezone
 from pathlib import Path
 from scripts.saveandload import save_json
+from email.utils import parsedate_to_datetime
+
 
 raw_data = Path("data/raw/ihsg/ihsg_daily.csv")
 output_path = Path("data/processed/ihsg_processed.json")

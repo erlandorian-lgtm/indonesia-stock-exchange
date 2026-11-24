@@ -3,11 +3,6 @@ from datetime import datetime, timezone
 from pathlib import Path
 from scripts.saveandload import load_json_list, save_json
 
-rejected_output_path = Path("data/processed/bi_rejected.json")
-output_path = Path("data/processed/bi_processed.json")
-load_bi_records_path = Path("data/processed/bi_processed.json")
-raw_data = Path("data/raw/bi/bi_raw.xml") 
-
 # Preparing Which Elements in XML to save into Json
 def parse_items(root, existing_list):
     new_bi = []
@@ -33,8 +28,10 @@ def cleaning_bi_records(bi_records):
     cleaned, rejected = [], []
     ingested_at = datetime.now(timezone.utc).isoformat()
     for record in bi_records:
-        if not all(record.values()):
-            record["reason"] = "missing field"
+        required_fields = ["Tanggal", "Mata Uang", "Nilai Beli", "Nilai Jual"]
+        if not all(record[field] for field in required_fields):
+            record["rejected_at_utc"] = datetime.now(timezone.utc).isoformat()
+            record["reason"] = "missing required field"
             rejected.append(record)
             continue
         try:
@@ -47,20 +44,25 @@ def cleaning_bi_records(bi_records):
             record["ingested_at_utc"] = ingested_at
             cleaned.append(record)
         except ValueError as e:
-            record["reason"] = str(e)
+            record["rejected_at_utc"] = datetime.now(timezone.utc).isoformat()
+            record["reason"] = f"invalid BI record: {e}"
             rejected.append(record)
     return cleaned, rejected
 
-def main():
+def main(source):
+    raw_data = Path(f"data/raw/{source}/{source}_raw.xml")
+    output_path = Path(f"data/processed/{source}_processed.json")
+    rejected_path = Path(f"data/processed/{source}_rejected.json")
     root = ET.parse(raw_data).getroot()
     print(sorted({i.findtext("mts_subkursasing") for i in root.findall(".//Table")}))  
 
-    existing = load_json_list(load_bi_records_path)
+    existing = load_json_list(output_path)
+    existing_rejected = load_json_list(rejected_path)
     existing_keys = { (record["Tanggal"], record["Mata Uang"]) for record in existing}
     new = parse_items(root, existing_keys)
     cleaned, rejected = cleaning_bi_records(new)
     save_json(existing + cleaned, output_path)
-    save_json(load_json_list(rejected_output_path) + rejected, rejected_output_path)
+    save_json(existing_rejected + rejected, rejected_path)
 
 if __name__ == "__main__":
-    main()
+    main("bi")

@@ -2,11 +2,7 @@ import xml.etree.ElementTree as ET
 from datetime import datetime, timezone
 from pathlib import Path
 from scripts.saveandload import load_json_list, save_json
-
-rejected_output_path = Path("data/processed/cnn_rejected.json")
-output_path = Path("data/processed/cnn_articles.json")
-load_articles_path = Path("data/processed/cnn_articles.json")
-raw_data = Path("data/raw/cnn/cnn_raw.xml") 
+from email.utils import parsedate_to_datetime
 
 # Preparing Which Elements in XML to save into Json
 def parse_items(channel, existing_guids):
@@ -35,36 +31,56 @@ def parse_items(channel, existing_guids):
     return new_articles
 
 # Checking NULL Data
+
 def cleaning_articles(new_articles):
     cleaned_articles = []
     rejected_articles = []
+
     ingested_at = datetime.now(timezone.utc).isoformat()
+
     for article in new_articles:
-        if not article["title"] or not article["link"] or not article["pubDate"] or not article["guid"]:
+        required_fields = ["title", "link", "pubDate", "guid"]
+        
+        if not all(article[field] for field in required_fields):
+            article["rejected_at_utc"] = datetime.now(timezone.utc).isoformat()
+            article["reason"] = "missing required field"
             rejected_articles.append(article)
-        else:
-            try:
-                date_string = article["pubDate"]
-                parsed_date = datetime.strptime(
-                date_string,"%a, %d %b %Y %H:%M:%S %z")
-                utc = parsed_date.astimezone(timezone.utc)
-                article["published_utc"] = utc.isoformat()
-                article["ingested_at_utc"] = ingested_at
-                cleaned_articles.append(article)
-            except ValueError:
-                rejected_articles.append(article)
+            continue
+        try:
+            parsed_date = parsedate_to_datetime(article["pubDate"])
+
+            if parsed_date is None:
+                raise ValueError("invalid publication date")
+
+            utc = parsed_date.astimezone(timezone.utc)
+
+            article["published_utc"] = utc.isoformat()
+            article["ingested_at_utc"] = ingested_at
+            cleaned_articles.append(article)
+
+        except (ValueError, TypeError, OverflowError) as e:
+            article["rejected_at_utc"] = datetime.now(timezone.utc).isoformat()
+            article["reason"] = f"invalid publication date: {e}"
+            rejected_articles.append(article)
 
     return cleaned_articles, rejected_articles
 
-def main():
+
+def main(source):
+    raw_data = Path(f"data/raw/{source}/{source}_raw.xml")
+    output_path = Path(f"data/processed/{source}_articles.json")
+    rejected_path = Path(f"data/processed/{source}_rejected.json")
     tree = ET.parse(raw_data)
     channel = tree.getroot().find("channel")
-    existing = load_json_list(load_articles_path)
+    if channel is None:
+        raise ValueError("RSS channel not found")
+    existing = load_json_list(output_path)
+    existing_rejected = load_json_list(rejected_path)
     guids = set(article["guid"] for article in existing)
     new = parse_items(channel, guids)
     cleaned, rejected = cleaning_articles(new)
     save_json(existing + cleaned, output_path)
-    save_json(rejected, rejected_output_path)
+    save_json(existing_rejected + rejected, rejected_path)
 
 if __name__ == "__main__":
-    main()
+    main("cnn")
