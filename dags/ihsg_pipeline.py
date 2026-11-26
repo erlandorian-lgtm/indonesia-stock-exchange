@@ -1,12 +1,10 @@
 from airflow.decorators import dag, task
 from datetime import datetime
+from airflow.providers.smtp.notifications.smtp import SmtpNotifier
 
 default_args = {
     "owner" : "erlandobrian",
     "retries" : 2,
-    "email" : ["erlando.rian@gmail.com"],
-    "email_on_failure" : True,
-    "email_on_retry" : False,
 }
 
 @dag(
@@ -15,7 +13,20 @@ default_args = {
     start_date=datetime(2026,11,23),
     schedule="@daily",
     catchup=False,
-    tags=["ihsg","data-engineering"]
+    tags=["ihsg","data-engineering"],
+    on_failure_callback=SmtpNotifier(
+        to="erlando.rian@gmail.com",
+        from_email="erlando.rian@gmail.com",
+        subject="[ALERT] IHSG Pipeline Failed",
+        html_content="""
+        <h3>IHSG Pipeline Failure</h3>
+        <p>DAG: {{ dag.dag_id }}</p>
+        <p>Run ID: {{ run_id }}</p>
+        <p>Failed task: {{ ti.task_id }}</p>
+        <p><a href="{{ ti.log_url }}">View task logs</a></p>
+        """,
+        smtp_conn_id="smtp_default",
+    ),
 )
 
 def ihsg_pipeline():
@@ -46,6 +57,11 @@ def ihsg_pipeline():
 
         load_postgres()
 
-    extract_data() >> process_data() >> load_data()
+    @task
+    def load_bigquery():
+        from src.processing.load_to_bigquery import main as load_bigquery_data
+        load_bigquery_data()
+
+    extract_data() >> process_data() >> load_data() >> load_bigquery()
 
 ihsg_pipeline()
